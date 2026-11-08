@@ -64,7 +64,7 @@ public final class DefaultConfigWriter implements ConfigWriter {
 		Path target = resolve(path);
 		try {
 			ensureParent(target);
-			writeAtomically(target, serialize(config));
+			FileUtil.writeAtomically(target, serialize(config));
 		} catch (IOException e) {
 			throw new ConfigException("Failed to write config file: " + target, e);
 		}
@@ -95,7 +95,7 @@ public final class DefaultConfigWriter implements ConfigWriter {
 		Path target = resolve(path);
 		try {
 			ensureParent(target);
-			writeAtomically(target, serialize(tree(node), modelType));
+			FileUtil.writeAtomically(target, serialize(tree(node), modelType));
 		} catch (IOException e) {
 			throw new ConfigException("Failed to write config tree: " + target, e);
 		}
@@ -147,25 +147,6 @@ public final class DefaultConfigWriter implements ConfigWriter {
 
 	private JsonNode tree(JsonNode node) {
 		return node != null ? node : mapper.createObjectNode();
-	}
-
-	private void writeAtomically(Path target, byte[] bytes) throws IOException {
-		Path absolute = target.toAbsolutePath();
-		Path temporary = Files.createTempFile(absolute.getParent(), ".configura-", ".tmp");
-		try {
-			try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(temporary,
-					java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
-				java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(bytes);
-				while (buffer.hasRemaining()) channel.write(buffer);
-				channel.force(true);
-			}
-			if (Files.exists(absolute) && Files.getFileStore(absolute).supportsFileAttributeView("posix"))
-				Files.setPosixFilePermissions(temporary, Files.getPosixFilePermissions(absolute));
-			Files.move(temporary, absolute, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-					java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-		} finally {
-			Files.deleteIfExists(temporary);
-		}
 	}
 
 	private Path resolve(Path path) {
