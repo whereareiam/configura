@@ -144,6 +144,11 @@ a file that still says `join: "{player} joined"` is updated, and one where the u
 `join: "{player} arrived"` is not. A map or keyed list entry your defaults no longer have is left
 as it is in the file.
 
+A section never changes its type by itself. When a [polymorphic](features/POLYMORPHIC.md) section's
+default moves to another type, a file still holding the old default keeps its type and its values,
+because following only the discriminator would mix the fields of two types. The user switches the
+type by editing the section; values inside a section whose type stays the same follow as usual.
+
 Some values must never change by themselves, such as a server address the user may have left at
 its default on purpose. Mark them with `@Merge(present = WhenPresent.KEEP_AS_WRITTEN)`; a value
 already in the file then stays, with nothing recorded for it.

@@ -105,6 +105,24 @@ class ListMergeIntegrationTest {
 	}
 
 	@Test
+	@DisplayName("Custom keyed entries of a type without defaults are kept as written")
+	void customKeyedEntriesWithoutTypeDefaultsAreKept(@TempDir Path tempDir) throws Exception {
+		Path file = tempDir.resolve("labels.yml");
+		Files.writeString(file, """
+				labels:
+				  - id: custom
+				    text: Mine
+				""");
+
+		LabelListConfig config = Config.yaml().update(file, LabelListConfig.class);
+
+		assertEquals(2, config.labels.size());
+		assertEquals("custom", config.labels.get(0).id);
+		assertEquals("Mine", config.labels.get(0).text);
+		assertEquals("shipped", config.labels.get(1).id);
+	}
+
+	@Test
 	@DisplayName("Seed defaults presence appends omitted default entries")
 	void seedDefaultsPresenceAppendsOmittedDefaultEntries(@TempDir Path tempDir) throws Exception {
 		Path file = tempDir.resolve("providers.yml");
@@ -275,6 +293,24 @@ class ListMergeIntegrationTest {
 	public static class DeclaredProviderListConfig {
 		@Merge(key = "id")
 		public List<DeclaredProviderEntry> providers = new ArrayList<>();
+	}
+
+	public static class LabelListConfig {
+		@Merge(key = "id")
+		public List<LabelEntry> labels = List.of(new LabelEntry("shipped", "Shipped"));
+	}
+
+	public static class LabelEntry {
+		public String id;
+		public String text;
+
+		public LabelEntry() {
+		}
+
+		LabelEntry(String id, String text) {
+			this.id = id;
+			this.text = text;
+		}
 	}
 
 	public static class ProviderEntry {
