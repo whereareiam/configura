@@ -10,6 +10,9 @@ import me.whereareiam.configura.Configura;
 import me.whereareiam.configura.feature.polymorphic.api.annotation.Polymorphic;
 import me.whereareiam.configura.type.Format;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import java.util.List;
 
@@ -187,6 +190,54 @@ public class PolymorphicIntegrationTest {
 				.build()
 				.read(yaml.getBytes(), InferBase.class);
 		assertInstanceOf(InferServers.class, value);
+	}
+
+	@Test
+	void trackedValuesInsideASectionFollowNewDefaults(@TempDir Path directory) {
+		Configura configura = annotationConfigura().toBuilder().trackDefaults().build();
+		Path file = directory.resolve("trigger.yml");
+
+		configura.update(file, SymbolHolder.class);
+		TriggerHolder updated = configura.update(file, ChangedSymbolHolder.class);
+
+		SymbolTrigger trigger = assertInstanceOf(SymbolTrigger.class, updated.trigger);
+		assertEquals("?", trigger.getSymbol());
+	}
+
+	@Test
+	void trackedSectionKeepsItsTypeWhenTheDefaultTypeChanges(@TempDir Path directory) {
+		Configura configura = annotationConfigura().toBuilder().trackDefaults().build();
+		Path file = directory.resolve("trigger.yml");
+
+		configura.update(file, SymbolHolder.class);
+		TriggerHolder updated = configura.update(file, RegexHolder.class);
+
+		SymbolTrigger trigger = assertInstanceOf(SymbolTrigger.class, updated.trigger);
+		assertEquals("SYMBOL", trigger.getType());
+		assertEquals("!", trigger.getSymbol());
+		assertEquals("SYMBOL", configura.readNode(file).at("/trigger/type").asText());
+	}
+
+	public static class TriggerHolder {
+		public TriggerBase trigger;
+	}
+
+	public static class SymbolHolder extends TriggerHolder {
+		public SymbolHolder() {
+			trigger = SymbolTrigger.builder().type("SYMBOL").symbol("!").build();
+		}
+	}
+
+	public static class ChangedSymbolHolder extends TriggerHolder {
+		public ChangedSymbolHolder() {
+			trigger = SymbolTrigger.builder().type("SYMBOL").symbol("?").build();
+		}
+	}
+
+	public static class RegexHolder extends TriggerHolder {
+		public RegexHolder() {
+			trigger = RegexTrigger.builder().type("REGEX").pattern("^x").build();
+		}
 	}
 
 	private Configura annotationConfigura() {

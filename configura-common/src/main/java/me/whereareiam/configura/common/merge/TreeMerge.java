@@ -28,7 +28,9 @@ import java.util.Set;
  * With {@link TrackedDefaults}, a value that is still the default the previous write put there is
  * not the user's: it is replaced by the current default. Every default the merge meets is recorded
  * for the next write. Fields kept as written are never tracked, and neither are the entries of a
- * map or keyed list that the defaults do not have.
+ * map or keyed list that the defaults do not have. A section never changes its type by following:
+ * when a followed value, such as a discriminator, would make the section another type than the one
+ * it was merged as, the section is merged again without following.
  */
 @RequiredArgsConstructor
 final class TreeMerge {
@@ -85,11 +87,16 @@ final class TreeMerge {
 					null,
 					null
 			);
-			Class<?> valueType = documents.resolveType(SerializedFieldResolver.valueType(ownerType, field), context);
+			Class<?> declaredType = SerializedFieldResolver.valueType(ownerType, field);
+			Class<?> valueType = documents.resolveType(declaredType, context);
 			boolean valueKeepsUnknown = keepsUnknown || keepsUnknown(field) || keepsUnknown(valueType);
 
+			FieldRule rule = FieldRule.of(field);
 			String valuePath = path == null ? null : TrackedDefaults.child(path, key);
-			JsonNode merged = field(FieldRule.of(field), field, sourceValue, defaultValue, valueType, valueKeepsUnknown, valuePath);
+			JsonNode merged = field(rule, field, sourceValue, defaultValue, valueType, valueKeepsUnknown, valuePath);
+			if (sourceValue != null && !rule.isMap() && !rule.isKeyedList() && changesType(merged, declaredType, valueType, context))
+				merged = withoutFollowing().field(rule, field, sourceValue, defaultValue, valueType, valueKeepsUnknown, valuePath);
+
 			if (merged != null && !merged.isNull()) result.set(key, merged);
 		}
 
@@ -156,6 +163,32 @@ final class TreeMerge {
 
 	private boolean tracks(@Nullable String path) {
 		return tracked != null && path != null;
+	}
+
+	/** Tells whether following made a merged section resolve to another type than it was merged as. */
+	private boolean changesType(
+			@Nullable JsonNode merged,
+			Class<?> declaredType,
+			Class<?> mergedType,
+			DocumentTypeContext context
+	) {
+		if (tracked == null || !tracked.follows() || merged == null || !merged.isObject()) return false;
+
+		DocumentTypeContext result = new DocumentTypeContext(
+				merged,
+				context.getParentNode(),
+				context.getField(),
+				context.getFieldName(),
+				context.getMapKey(),
+				context.getKeyedListEntryKey()
+		);
+
+		return documents.resolveType(declaredType, result) != mergedType;
+	}
+
+	/** Merges like this one, recording defaults without letting any value follow them. */
+	private TreeMerge withoutFollowing() {
+		return new TreeMerge(mapper, documents, modelDefaults, defaultsPolicy, tracked.recordingOnly());
 	}
 
 	private ObjectNode map(
@@ -267,11 +300,17 @@ final class TreeMerge {
 		Class<?> entryType = documents.resolveType(declaredType, context);
 		JsonNode defaults = entryDefaults(modelDefaults.ofType(entryType, defaultsPolicy, context), keyedDefault, entryType, keepsUnknown);
 
-		if (list && !(defaults instanceof ObjectNode))
+		if (defaults == null) return source == null ? mapper.nullNode() : source.deepCopy();
+		if (list && !defaults.isObject())
 			throw new ConfigException("Field " + describe(field) + " is merged by key, so its entries must be objects");
 
-		if (defaults == null) return source == null ? mapper.nullNode() : source.deepCopy();
-		if (defaults.isObject()) return object(source, defaults, entryType, keepsUnknown, path);
+		if (defaults.isObject()) {
+			JsonNode merged = object(source, defaults, entryType, keepsUnknown, path);
+			if (source == null || !changesType(merged, declaredType, entryType, context)) return merged;
+
+			return withoutFollowing().object(source, defaults, entryType, keepsUnknown, path);
+		}
+
 		return value(source == null || source.isNull() ? defaults : source, defaults, path);
 	}
 

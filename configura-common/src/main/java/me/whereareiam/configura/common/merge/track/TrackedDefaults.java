@@ -30,10 +30,11 @@ public final class TrackedDefaults {
 	private static final ObjectMapper CANONICAL = JsonMapper.builder().build();
 
 	private final Map<String, String> previous;
-	private final Map<String, String> written = new LinkedHashMap<>();
+	private final Map<String, String> written;
 
-	private TrackedDefaults(Map<String, String> previous) {
-		this.previous = Map.copyOf(previous);
+	private TrackedDefaults(Map<String, String> previous, Map<String, String> written) {
+		this.previous = previous;
+		this.written = written;
 	}
 
 	/**
@@ -43,7 +44,7 @@ public final class TrackedDefaults {
 	 * @return tracking without history
 	 */
 	public static @NotNull TrackedDefaults unknown() {
-		return new TrackedDefaults(Map.of());
+		return new TrackedDefaults(Map.of(), new LinkedHashMap<>());
 	}
 
 	/**
@@ -53,7 +54,27 @@ public final class TrackedDefaults {
 	 * @return tracking with history
 	 */
 	public static @NotNull TrackedDefaults of(@NotNull Map<String, String> previous) {
-		return new TrackedDefaults(previous);
+		return new TrackedDefaults(Map.copyOf(previous), new LinkedHashMap<>());
+	}
+
+	/**
+	 * Returns a view that records into this one but knows no previous write, so that nothing it is
+	 * asked about counts as untouched. Used for a part of the document whose values must stay as
+	 * they are in this write, while their defaults are still recorded for the next.
+	 *
+	 * @return recording view
+	 */
+	public @NotNull TrackedDefaults recordingOnly() {
+		return new TrackedDefaults(Map.of(), written);
+	}
+
+	/**
+	 * Tells whether values can follow new defaults through this instance.
+	 *
+	 * @return false for a {@link #recordingOnly()} view or without history
+	 */
+	public boolean follows() {
+		return !previous.isEmpty();
 	}
 
 	/**
