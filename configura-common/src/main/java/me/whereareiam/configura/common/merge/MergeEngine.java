@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import me.whereareiam.configura.common.merge.defaults.DefaultsProviderRegistry;
 import me.whereareiam.configura.common.merge.defaults.ModelDefaults;
+import me.whereareiam.configura.common.merge.track.TrackedDefaults;
 import me.whereareiam.configura.document.DocumentProcessor;
 import me.whereareiam.configura.merge.MergeBehavior;
 import me.whereareiam.configura.type.PrimitiveDefaultPolicy;
@@ -37,13 +38,21 @@ public final class MergeEngine {
 	/**
 	 * Completes a document with the defaults of a freshly constructed model, as {@code update} does.
 	 *
-	 * @param source what the file has, if anything
-	 * @param model  freshly constructed model
-	 * @param type   model type
+	 * @param source  what the file has, if anything
+	 * @param model   freshly constructed model
+	 * @param type    model type
+	 * @param tracked defaults the previous write put into the file, which then follow the current
+	 *                defaults where nobody changed them and record them for the next write; null
+	 *                when the instance does not track defaults
 	 * @return merged document
 	 */
-	public <T> @NotNull ObjectNode mergeDefaults(@Nullable JsonNode source, @NotNull T model, @NotNull Class<T> type) {
-		return merge(source, model, type, behavior.getPrimitiveDefaultPolicy());
+	public <T> @NotNull ObjectNode mergeDefaults(
+			@Nullable JsonNode source,
+			@NotNull T model,
+			@NotNull Class<T> type,
+			@Nullable TrackedDefaults tracked
+	) {
+		return merge(source, model, type, behavior.getPrimitiveDefaultPolicy(), tracked);
 	}
 
 	/**
@@ -56,13 +65,19 @@ public final class MergeEngine {
 	 * @return merged document
 	 */
 	public <T> @NotNull ObjectNode mergeUserModel(@Nullable JsonNode source, @NotNull T model, @NotNull Class<T> type) {
-		return merge(source, model, type, PrimitiveDefaultPolicy.PRESERVE);
+		return merge(source, model, type, PrimitiveDefaultPolicy.PRESERVE, null);
 	}
 
-	private ObjectNode merge(@Nullable JsonNode source, Object model, Class<?> type, PrimitiveDefaultPolicy policy) {
+	private ObjectNode merge(
+			@Nullable JsonNode source,
+			Object model,
+			Class<?> type,
+			PrimitiveDefaultPolicy policy,
+			@Nullable TrackedDefaults tracked
+	) {
 		boolean keepsUnknown = behavior.getUnknownFieldPolicy() == UnknownFieldPolicy.PRESERVE || TreeMerge.keepsUnknown(type);
 
-		return new TreeMerge(mapper, documents, modelDefaults, policy)
-				.object(source, modelDefaults.of(model, type, policy), type, keepsUnknown);
+		return new TreeMerge(mapper, documents, modelDefaults, policy, tracked)
+				.object(source, modelDefaults.of(model, type, policy), type, keepsUnknown, tracked == null ? null : "");
 	}
 }

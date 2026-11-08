@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import me.whereareiam.configura.annotation.PreserveUnknownFields;
 import me.whereareiam.configura.common.merge.defaults.ModelDefaults;
+import me.whereareiam.configura.common.merge.track.TrackedDefaults;
 import me.whereareiam.configura.common.util.SerializedFieldResolver;
 import me.whereareiam.configura.document.DocumentProcessor;
 import me.whereareiam.configura.document.DocumentTypeContext;
@@ -23,6 +24,11 @@ import java.util.Set;
 /**
  * Merges what a user wrote with the defaults of the model, key by key, following each field's
  * {@link FieldRule}. The user's values always win; the rules only decide what is added around them.
+ * <p>
+ * With {@link TrackedDefaults}, a value that is still the default the previous write put there is
+ * not the user's: it is replaced by the current default. Every default the merge meets is recorded
+ * for the next write. Fields kept as written are never tracked, and neither are the entries of a
+ * map or keyed list that the defaults do not have.
  */
 @RequiredArgsConstructor
 final class TreeMerge {
@@ -30,6 +36,7 @@ final class TreeMerge {
 	private final DocumentProcessor documents;
 	private final ModelDefaults modelDefaults;
 	private final PrimitiveDefaultPolicy defaultsPolicy;
+	private final @Nullable TrackedDefaults tracked;
 
 	/**
 	 * Merges two objects bound to a model type.
@@ -38,8 +45,15 @@ final class TreeMerge {
 	 * @param defaults     what the model has by default, if anything
 	 * @param ownerType    model type the keys belong to
 	 * @param keepsUnknown whether keys the model does not know are kept
+	 * @param path         JSON Pointer of the object for tracking, or null when it is not tracked
 	 */
-	ObjectNode object(@Nullable JsonNode source, @Nullable JsonNode defaults, Class<?> ownerType, boolean keepsUnknown) {
+	ObjectNode object(
+			@Nullable JsonNode source,
+			@Nullable JsonNode defaults,
+			Class<?> ownerType,
+			boolean keepsUnknown,
+			@Nullable String path
+	) {
 		ObjectNode result = mapper.createObjectNode();
 		ObjectNode sourceObject = source instanceof ObjectNode object ? object : mapper.createObjectNode();
 		ObjectNode defaultObject = defaults instanceof ObjectNode object ? object : mapper.createObjectNode();
@@ -74,7 +88,8 @@ final class TreeMerge {
 			Class<?> valueType = documents.resolveType(SerializedFieldResolver.valueType(ownerType, field), context);
 			boolean valueKeepsUnknown = keepsUnknown || keepsUnknown(field) || keepsUnknown(valueType);
 
-			JsonNode merged = field(FieldRule.of(field), field, sourceValue, defaultValue, valueType, valueKeepsUnknown);
+			String valuePath = path == null ? null : TrackedDefaults.child(path, key);
+			JsonNode merged = field(FieldRule.of(field), field, sourceValue, defaultValue, valueType, valueKeepsUnknown, valuePath);
 			if (merged != null && !merged.isNull()) result.set(key, merged);
 		}
 
@@ -95,17 +110,52 @@ final class TreeMerge {
 			@Nullable JsonNode source,
 			JsonNode defaults,
 			Class<?> valueType,
-			boolean keepsUnknown
+			boolean keepsUnknown,
+			@Nullable String path
 	) {
 		if (source == null && !rule.addsDefaultWhenAbsent()) return null;
 		if (source != null && !rule.fillsMissing()) return source.deepCopy();
 
-		if (rule.isMap()) return map(rule, field, source, defaults, valueType, keepsUnknown);
-		if (rule.isKeyedList()) return keyedList(rule, field, source, defaults, valueType, keepsUnknown);
-		if (source == null) return defaults.deepCopy();
-		if (source.isObject() && defaults.isObject()) return object(source, defaults, valueType, keepsUnknown);
+		if (rule.isMap()) return map(rule, field, source, defaults, valueType, keepsUnknown, path);
+		if (rule.isKeyedList()) return keyedList(rule, field, source, defaults, valueType, keepsUnknown, path);
+		if (source == null) return added(rule, field, defaults, valueType, keepsUnknown, path);
+		if (source.isObject() && defaults.isObject()) return object(source, defaults, valueType, keepsUnknown, path);
 
-		return source.deepCopy();
+		return value(source, defaults, path);
+	}
+
+	/**
+	 * Adds a default the file lacks as it is. When tracked, the default is also merged with itself,
+	 * only to record its values at the paths the next merge will look them up by.
+	 */
+	private JsonNode added(
+			FieldRule rule,
+			@Nullable Field field,
+			JsonNode defaults,
+			Class<?> valueType,
+			boolean keepsUnknown,
+			@Nullable String path
+	) {
+		if (tracks(path)) field(rule, field, defaults, defaults, valueType, keepsUnknown, path);
+
+		return defaults.deepCopy();
+	}
+
+	/**
+	 * Decides a value the merge does not descend into: the user's value, unless tracking shows it is
+	 * the default the previous write put there, in which case the current default takes its place.
+	 */
+	private JsonNode value(JsonNode source, JsonNode defaults, @Nullable String path) {
+		if (!tracks(path)) return source.deepCopy();
+
+		boolean untouched = tracked.untouched(path, source);
+		tracked.record(path, defaults);
+
+		return untouched ? defaults.deepCopy() : source.deepCopy();
+	}
+
+	private boolean tracks(@Nullable String path) {
+		return tracked != null && path != null;
 	}
 
 	private ObjectNode map(
@@ -114,7 +164,8 @@ final class TreeMerge {
 			@Nullable JsonNode source,
 			JsonNode defaults,
 			Class<?> valueType,
-			boolean keepsUnknown
+			boolean keepsUnknown,
+			@Nullable String path
 	) {
 		if (source != null && !source.isObject()) throw wrongNode(field, "a map", source);
 		if (!defaults.isObject()) throw wrongNode(field, "a map", defaults);
@@ -126,7 +177,7 @@ final class TreeMerge {
 		defaults.properties().forEach(entry -> defaultEntries.put(entry.getKey(), entry.getValue()));
 
 		ObjectNode result = mapper.createObjectNode();
-		entries(rule, field, sourceEntries, defaultEntries, source == null, valueType, keepsUnknown, false)
+		entries(rule, field, sourceEntries, defaultEntries, source == null, valueType, keepsUnknown, false, path)
 				.forEach(result::set);
 
 		return result;
@@ -138,7 +189,8 @@ final class TreeMerge {
 			@Nullable JsonNode source,
 			JsonNode defaults,
 			Class<?> entryType,
-			boolean keepsUnknown
+			boolean keepsUnknown,
+			@Nullable String path
 	) {
 		if (source != null && !source.isArray()) throw wrongNode(field, "a list", source);
 		if (!defaults.isArray()) throw wrongNode(field, "a list", defaults);
@@ -147,7 +199,7 @@ final class TreeMerge {
 		Map<String, JsonNode> defaultEntries = index(rule, field, defaults, "default");
 
 		ArrayNode result = mapper.createArrayNode();
-		entries(rule, field, sourceEntries, defaultEntries, source == null, entryType, keepsUnknown, true)
+		entries(rule, field, sourceEntries, defaultEntries, source == null, entryType, keepsUnknown, true, path)
 				.values()
 				.forEach(result::add);
 
@@ -167,22 +219,29 @@ final class TreeMerge {
 			boolean sourceAbsent,
 			Class<?> entryType,
 			boolean keepsUnknown,
-			boolean list
+			boolean list,
+			@Nullable String path
 	) {
 		Map<String, JsonNode> result = new LinkedHashMap<>();
 		for (Map.Entry<String, JsonNode> entry : sourceEntries.entrySet()) {
-			JsonNode defaultEntry = defaultEntries.get(entry.getKey());
+			String key = entry.getKey();
+			JsonNode defaultEntry = defaultEntries.get(key);
 			if (defaultEntry == null && rule.rejectsUnknownEntries())
-				throw new ConfigException("Field " + describe(field) + " does not allow the entry '" + entry.getKey() + "'");
+				throw new ConfigException("Field " + describe(field) + " does not allow the entry '" + key + "'");
 
-			result.put(entry.getKey(), entry(field, entry.getKey(), entry.getValue(), defaultEntry, entryType, keepsUnknown, list));
+			String entryPath = path == null || defaultEntry == null ? null : TrackedDefaults.child(path, key);
+			result.put(key, entry(field, key, entry.getValue(), defaultEntry, entryType, keepsUnknown, list, entryPath));
 		}
 
 		if (!rule.addsMissingEntries() && !sourceAbsent) return result;
 
-		for (Map.Entry<String, JsonNode> entry : defaultEntries.entrySet())
-			if (!sourceEntries.containsKey(entry.getKey()))
-				result.put(entry.getKey(), entry(field, entry.getKey(), null, entry.getValue(), entryType, keepsUnknown, list));
+		for (Map.Entry<String, JsonNode> entry : defaultEntries.entrySet()) {
+			String key = entry.getKey();
+			if (sourceEntries.containsKey(key)) continue;
+
+			String entryPath = path == null ? null : TrackedDefaults.child(path, key);
+			result.put(key, entry(field, key, null, entry.getValue(), entryType, keepsUnknown, list, entryPath));
+		}
 
 		return result;
 	}
@@ -194,7 +253,8 @@ final class TreeMerge {
 			@Nullable JsonNode keyedDefault,
 			Class<?> declaredType,
 			boolean keepsUnknown,
-			boolean list
+			boolean list,
+			@Nullable String path
 	) {
 		DocumentTypeContext context = new DocumentTypeContext(
 				source != null ? source : keyedDefault,
@@ -211,9 +271,8 @@ final class TreeMerge {
 			throw new ConfigException("Field " + describe(field) + " is merged by key, so its entries must be objects");
 
 		if (defaults == null) return source == null ? mapper.nullNode() : source.deepCopy();
-		if (defaults.isObject()) return object(source, defaults, entryType, keepsUnknown);
-
-		return source != null && !source.isNull() ? source.deepCopy() : defaults.deepCopy();
+		if (defaults.isObject()) return object(source, defaults, entryType, keepsUnknown, path);
+		return value(source == null || source.isNull() ? defaults : source, defaults, path);
 	}
 
 	/** Lays the default entry of a key over the defaults every entry of that type has. */
@@ -228,7 +287,7 @@ final class TreeMerge {
 		if (!keyed) return typeDefaults.deepCopy();
 		if (!typeDefaults.isObject() || !keyedDefault.isObject()) return keyedDefault.deepCopy();
 
-		return object(keyedDefault, typeDefaults, entryType, keepsUnknown);
+		return object(keyedDefault, typeDefaults, entryType, keepsUnknown, null);
 	}
 
 	private Map<String, JsonNode> index(FieldRule rule, Field field, JsonNode list, String origin) {

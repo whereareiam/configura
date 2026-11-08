@@ -10,6 +10,8 @@ import me.whereareiam.configura.type.Format;
 import me.whereareiam.configura.common.document.DefaultDocumentProcessor;
 import me.whereareiam.configura.common.merge.MergeEngine;
 import me.whereareiam.configura.common.merge.defaults.DefaultsProviderRegistry;
+import me.whereareiam.configura.common.merge.track.TrackedDefaults;
+import me.whereareiam.configura.common.merge.track.TrackedDefaultsFile;
 import me.whereareiam.configura.common.reader.DefaultConfigReader;
 import me.whereareiam.configura.common.util.FileUtil;
 import me.whereareiam.configura.common.writer.DefaultConfigWriter;
@@ -44,6 +46,7 @@ public final class Configura {
 	private final DefaultsProviderRegistry defaultProviderRegistry;
 
 	private final MergeBehavior mergeBehavior;
+	private final boolean tracksDefaults;
 
 	private final Set<String> reservedKeys;
 	private final ObjectMapper mapper;
@@ -60,7 +63,8 @@ public final class Configura {
 			List<ConfiguraFeature> features,
 
 			DefaultsProviderRegistry defaultProviderRegistry,
-			MergeBehavior mergeBehavior
+			MergeBehavior mergeBehavior,
+			boolean tracksDefaults
 	) {
 		this.extension = extension;
 
@@ -71,6 +75,7 @@ public final class Configura {
 		this.defaultProviderRegistry = defaultProviderRegistry.copy();
 
 		this.mergeBehavior = mergeBehavior != null ? mergeBehavior : MergeBehavior.defaults();
+		this.tracksDefaults = tracksDefaults;
 
 		ConfiguraFeatureRegistry featureRegistry = new ConfiguraFeatureRegistry();
 		for (ConfiguraFeature feature : this.features)
@@ -194,7 +199,7 @@ public final class Configura {
 
 		Class<T> type = (Class<T>) value.getClass();
 		JsonNode existing = existingResolvedTree(path, type);
-		ObjectNode merged = mergeDefaults(existing, value, type);
+		ObjectNode merged = mergeEngine.mergeDefaults(existing, value, type, null);
 		return bind(merged, type, "Failed to bind merged config to " + type.getName());
 	}
 
@@ -204,11 +209,15 @@ public final class Configura {
 
 	public <T> T update(Path path, Class<T> type) {
 		T empty = instantiate(type);
-		JsonNode existing = existingResolvedTree(path, type);
+		Path target = resolve(path);
+		JsonNode existing = existingResolvedTree(target, type);
+		TrackedDefaults tracked = tracksDefaults ? TrackedDefaultsFile.read(target) : null;
 
-		ObjectNode merged = mergeDefaults(existing, empty, type);
+		ObjectNode merged = mergeEngine.mergeDefaults(existing, empty, type, tracked);
 		T value = bind(merged, type, "Failed to bind updated config to " + type.getName());
-		writer.writeNode(path, carryReservedKeys(existing, merged), type);
+		writer.writeNode(target, carryReservedKeys(existing, merged), type);
+		if (tracked != null) TrackedDefaultsFile.write(target, tracked);
+
 		return value;
 	}
 
@@ -293,6 +302,16 @@ public final class Configura {
 
 	public MergeBehavior mergeBehavior() {
 		return mergeBehavior;
+	}
+
+	/**
+	 * Tells whether {@code update} remembers the defaults it writes, so that values nobody touched
+	 * follow later defaults.
+	 *
+	 * @return true when built with {@link Builder#trackDefaults()}
+	 */
+	public boolean tracksDefaults() {
+		return tracksDefaults;
 	}
 
 	/**
@@ -406,10 +425,6 @@ public final class Configura {
 		return carried;
 	}
 
-	private <T> ObjectNode mergeDefaults(JsonNode source, T model, Class<T> type) {
-		return mergeEngine.mergeDefaults(source, model, type);
-	}
-
 	private <T> ObjectNode mergeUserModel(JsonNode source, T model, Class<T> type) {
 		return mergeEngine.mergeUserModel(source, model, type);
 	}
@@ -426,6 +441,7 @@ public final class Configura {
 		private String extension;
 		private Function<List<Module>, ObjectMapper> mapperFactory;
 		private MergeBehavior mergeBehavior;
+		private boolean tracksDefaults;
 
 		private Builder() {
 			this.extension = Format.YAML.getExtension();
@@ -441,6 +457,7 @@ public final class Configura {
 			this.features.addAll(source.features);
 			this.defaultProviderRegistry = source.defaultProviderRegistry.copy();
 			this.mergeBehavior = source.mergeBehavior;
+			this.tracksDefaults = source.tracksDefaults;
 		}
 
 		/**
@@ -531,12 +548,45 @@ public final class Configura {
 		}
 
 		/**
+		 * Lets {@code update} tell defaults it wrote from values a user edited. Each update records
+		 * the defaults of the document in {@code .configura/<file name>.defaults.json} beside it. On
+		 * the next update, a value that is still the default recorded for it takes the current
+		 * default; a value that differs is the user's and is kept. Missing values are added as
+		 * always. Fields with {@code @Merge(present = WhenPresent.KEEP_AS_WRITTEN)} never change by
+		 * themselves.
+		 * <p>
+		 * Without a readable record, as on the first tracked update of an existing file, every value
+		 * the file has is kept.
+		 *
+		 * <pre>{@code
+		 * Configura configura = Configura.builder()
+		 *         .defaults(MessagesDefaults.class)
+		 *         .trackDefaults()
+		 *         .build();
+		 * }</pre>
+		 *
+		 * @return this builder
+		 */
+		public Builder trackDefaults() {
+			this.tracksDefaults = true;
+			return this;
+		}
+
+		/**
 		 * Creates the instance.
 		 *
 		 * @return immutable Configura
 		 */
 		public Configura build() {
-			return new Configura(extension, mapperFactory, modules, features, defaultProviderRegistry, mergeBehavior);
+			return new Configura(
+					extension,
+					mapperFactory,
+					modules,
+					features,
+					defaultProviderRegistry,
+					mergeBehavior,
+					tracksDefaults
+			);
 		}
 	}
 }

@@ -49,6 +49,22 @@ Configura json = configura.toBuilder().format(Format.JSON).build();
 `configura.mapper()` returns the `ObjectMapper` files are read and written with, including your
 modules and those of the features.
 
+### Let untouched values follow new defaults
+
+By default `update` keeps every value a file has, including defaults an older release wrote. If
+values the user never changed should move to your new defaults, enable tracking:
+
+```java
+Configura configura = Configura.builder()
+		.defaults(MessagesDefaults.class)
+		.trackDefaults()
+		.build();
+```
+
+`update` then keeps a small record of what it wrote in a `.configura` directory beside each file.
+Values the user edited are always kept. How values are matched, and how to exempt a field, is in
+[Defaults and merging](MERGE.md#let-untouched-values-follow-new-defaults).
+
 ### Another format
 
 ```java
@@ -66,7 +82,7 @@ Paths may be given with or without the extension; without one, the instance's ex
 
 | Call | What it does |
 | --- | --- |
-| `update(path, Settings.class)` | Reads the file, fills in missing defaults, binds, writes the file back. Use this at startup. |
+| `update(path, Settings.class)` | Reads the file, fills in missing defaults, binds, writes the file back. With `trackDefaults()`, also moves values nobody changed to the current defaults. Use this at startup. |
 | `read(path, Settings.class)` | Binds the file as it is. No defaults, nothing written. Also takes `byte[]` or an `InputStream`. |
 | `merge(path, settings)` | Reads the file and fills in what it lacks from the given object; returns the bound result, writes nothing. |
 | `save(path, settings)` | Writes the given object, completed by the model's defaults. |
