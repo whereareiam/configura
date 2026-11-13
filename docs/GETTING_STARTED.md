@@ -93,6 +93,22 @@ Paths may be given with or without the extension; without one, the instance's ex
 Failures are reported as `ConfigException`. Writes replace the file atomically, so a failed write
 leaves the previous content.
 
+A model may be immutable: a record, or a class whose one constructor takes its properties. Configura
+binds it through that constructor, matching each key to a parameter's name, so compile it with
+`-parameters`. That keeps reading working where a record became a plain class, such as in a jar
+downgraded to an older Java:
+
+```java
+public record Range(int from, int to) {}
+
+public final class Window {
+    private final int from;
+    private final int to;
+
+    public Window(int from, int to) { this.from = from; this.to = to; }
+}
+```
+
 ## Supply defaults
 
 Field initializers are the simplest defaults. When defaults need code, or should live apart from

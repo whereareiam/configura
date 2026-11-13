@@ -1,6 +1,7 @@
 package me.whereareiam.configura.common;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
@@ -14,6 +15,7 @@ import com.fasterxml.jackson.databind.introspect.VisibilityChecker;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
 import me.whereareiam.configura.common.duration.DurationModule;
 import me.whereareiam.configura.type.Format;
 
@@ -92,6 +94,8 @@ public final class MapperFactory {
 	private static ObjectMapper configureCommon(ObjectMapper mapper) {
 		mapper.registerModule(new JavaTimeModule());
 		mapper.registerModule(new DurationModule());
+		// A model may be immutable: its one constructor takes the properties by the names it was compiled with.
+		mapper.registerModule(new ParameterNamesModule(JsonCreator.Mode.PROPERTIES));
 
 		mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 		mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
@@ -107,6 +111,8 @@ public final class MapperFactory {
 	private static ObjectMapper configureModern(ObjectMapper mapper, List<Module> modules) {
 		mapper.registerModule(new JavaTimeModule());
 		mapper.registerModule(new DurationModule());
+		// A model may be immutable: its one constructor takes the properties by the names it was compiled with.
+		mapper.registerModule(new ParameterNamesModule(JsonCreator.Mode.PROPERTIES));
 
 		if (modules != null) {
 			for (Module module : modules) {

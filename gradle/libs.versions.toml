@@ -16,6 +16,7 @@ jetbrains-annotations = { group = "org.jetbrains", name = "annotations", version
 jackson = { group = "com.fasterxml.jackson.core", name = "jackson-databind", version.ref = "jackson" }
 jackson-yaml = { group = "com.fasterxml.jackson.dataformat", name = "jackson-dataformat-yaml", version.ref = "jackson" }
 jackson-jsr310 = { group = "com.fasterxml.jackson.datatype", name = "jackson-datatype-jsr310", version.ref = "jackson" }
+jackson-parameter-names = { group = "com.fasterxml.jackson.module", name = "jackson-module-parameter-names", version.ref = "jackson" }
 
 # junit
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
@@ -23,4 +24,4 @@ junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform
 
 [bundles]
 
-jackson = ["jackson", "jackson-yaml", "jackson-jsr310"]
+jackson = ["jackson", "jackson-yaml", "jackson-jsr310", "jackson-parameter-names"]

@@ -16,7 +16,11 @@ java {
     withSourcesJar()
     withJavadocJar()
 }
-tasks.withType<JavaCompile>().configureEach { options.release.set(17) }
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
+    // Constructors keep their parameters' names, which the tests' immutable models are read by.
+    options.compilerArgs.add("-parameters")
+}
 
 dependencies {
 	"compileOnly"(libs.findLibrary("jetbrains-annotations").get())
